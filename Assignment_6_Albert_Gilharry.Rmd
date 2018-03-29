@@ -1,5 +1,5 @@
 ---
-title: 'DATA607 Assignment 6: Web APIs
+title: 'DATA607 Assignment 6: Web APIs'
 author: "Albert Gilharry"
 date: "29 March 2018"
 output:
@@ -15,7 +15,13 @@ always_allow_html: yes
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library ("httr")
+library("tidyverse")
+library("splitstackshape")
+library("jsonlite")
+library("DT")
+
+api_key = "57cc982821bc4d0fb06b840ef72a9be9"
 ```
 
 ## Intro
@@ -28,33 +34,28 @@ knitr::opts_chunk$set(echo = TRUE)
 **I decided to use the Most Popular API. This API returns a list of New York Times Articles based on shares, emails, and views.**
 </div>
 
-## Load Libraries
-
-```{r load-libraries}
-library ("httr")
-library("tidyverse")
-library("splitstackshape")
-library("jsonlite")
-library("stringr")
-library("DT")
-```
 
 ## Load JSON Data into Data Frame
 
 <div id = "comment">
-The NYT API only returns a maximum of 20 articles per request.
+I will use to NYT API to get the most frequently shared (by email) articles over the last 30 days.
+
+The NYT API returns a maximum of 20 articles per request.
+
 We must paginate these request using the `offset` parameter.
+
 We must also ensure that we do not exceed the rate limit of 5 requests per second.
 </div>
 
 <div id = "solution">
-```{r}
+```{r load-json, warning=FALSE}
 # load JSON data into data frame
-url = "https://api.nytimes.com/svc/mostpopular/v2/mostemailed/all-sections/30.json?api-key=57cc982821bc4d0fb06b840ef72a9be9"
+url = paste0("https://api.nytimes.com/svc/mostpopular/v2/mostemailed/all-sections/30.json?api-key=", api_key)
 articles <- fromJSON(url, flatten = TRUE) %>% data.frame()
 pages <- floor(articles$num_results[1]/20) 
 
 for(i in 1:pages){
+  print(paste0("Loading page ", i, " of ", pages, "." ))
   page <- fromJSON(paste0(url, "&offset=",i*20), flatten = TRUE) %>% data.frame()
   articles <- bind_rows(articles,page) # build data frame incrementally
   Sys.sleep(1) #Stay within usage rate limits
@@ -69,11 +70,10 @@ articles <- rowid_to_column(articles,'id')
 ## Preview Resulting Data Table
 
 <div id = "solution">
-```{r}
+```{r preview-articles}
 print(names(articles))
 
-
-datatable(head(select(articles, results.title, results.source, results.des_facet, results.published_date)), options = list(filter = FALSE),filter="none")
+datatable(head(select(articles, results.title, results.source, results.des_facet, results.published_date)), options = list(filter = FALSE))
 ```
 </div>
 
@@ -87,7 +87,7 @@ The keywords will need to be separated and then placed in a long format to facil
 </div>
 
 <div id = "solution">
-```{r}
+```{r tidy-keywords}
 keywords <- select(articles, `id`, `results.des_facet`)  %>% 
   group_by(`id`) %>% summarize(keyword = paste(unlist( `results.des_facet` ),collapse = ","))  %>%
   cSplit("keyword", sep = ",", direction = "long")
@@ -97,24 +97,25 @@ keywords <- select(articles, `id`, `results.des_facet`)  %>%
 
 ## Preview Transformed Data
 
-```{r}
-datatable(head(keywords), options = list(filter = FALSE),filter="none")
+```{r preview-keywords}
+datatable(keywords, options = list(filter = FALSE))
 ```
 
 
-## Visualize: Top 20 Email Shares by Keyword
+## Visualization: Top 20 Email Shares by Keyword
 
 <div id = "solution">
-```{r}
+```{r plot-keywords}
   group_by(keywords, keyword) %>%
   summarize(count = n())  %>%
   arrange(desc(count)) %>%
   top_n(20,count) %>%
   ggplot(aes(x = reorder(keyword, count), y = count,  fill=keyword, label = count)) + 
   geom_histogram( stat='identity', show.legend = F ) + 
-  geom_text(size = 2, position = position_stack(vjust = 0.5)) +
+  geom_text(size = 2, position = position_stack(vjust = 0.5)) + 
   coord_flip() +  
-  labs( title = "Top 20 Email Shares by Keyword", x = "Keywords/Tags", y = "Frequency" )
+  labs( title = "Top 20 Email Shares by Keyword", x = "Keywords/Tags", y = "Frequency" ) +
+  theme(plot.title = element_text(hjust = 2))
 ```
 </div>
 
@@ -122,5 +123,5 @@ datatable(head(keywords), options = list(filter = FALSE),filter="none")
 ## Conclusion
 <div id = "comment">
 The results show that the top NYT Articles shared by email were dominated by politics. 3 of the top 20 tags were related to Gun violence.
-The NYT API was very nice to work with in R. This API may be applicable 
+It would be great for more media houses to provide such an API service so that we can compare and contrast trending feeds across various sources.
 </div>
