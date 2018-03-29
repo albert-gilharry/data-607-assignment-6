@@ -1,7 +1,7 @@
 ---
-title: 'DATA607 Assignment 5: Working with XML and JSON in R'
+title: 'DATA607 Assignment 6: Web APIs
 author: "Albert Gilharry"
-date: "15 March 2018"
+date: "29 March 2018"
 output:
   html_document:
     css: ./css.css
@@ -20,144 +20,107 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Intro
 
-<div id = "solution">
-**For this assignment, we were tasked with creating HTML, XML, and JSON files of 3 or our favourite books on one of our favorite topics.**
-**At least one of the books must have more than one author.**
-**Each of the different file structures should be loaded into R data frames. This is a primer for further work with these structures in the semseter.**
+<div id = "comment">
+**We were tasked to choose one of the New York Times APIs, construct an interface in R to read in the JSON data, and transform it to an R dataframe.**
 </div>
 
+<div id = "solution">
+**I decided to use the Most Popular API. This API returns a list of New York Times Articles based on shares, emails, and views.**
+</div>
 
 ## Load Libraries
 
 ```{r load-libraries}
+library ("httr")
 library("tidyverse")
-library("rvest")
-library("XML")
-library("methods")
+library("splitstackshape")
 library("jsonlite")
 library("stringr")
 library("DT")
-library ("RCurl")
-
 ```
-## Preview HTML File
 
-![HTML FIle](images/HTML.PNG)
-
-
-## Load HTML Data & Create Data Frame
-
-<div id  = "solution">
-```{r}
-
-# load HTML data into data frame
-url <- "https://raw.githubusercontent.com/albert-gilharry/DATA607-Assignment-5/master/data/books.html"
-htmlBooks <- url %>%
-  read_html() %>%
-  html_nodes("table") %>%
-  html_table()
-
-htmlBooks <- htmlBooks[[1]]
-```
-</div>
-
-## View HTML Data Frame
-
-<div id = "solution">
-```{r}
-datatable(htmlBooks, options = list(filter = FALSE), filter = "none")
-```
-</div>
-
-## Preview XML File
-
-![HTML FIle](images/XML.PNG)
-
-
-## Load XML Data & Create Data Frame
+## Load JSON Data into Data Frame
 
 <div id = "comment">
-The books with multiple authors posed a problem because the built in functionality to convert XML to a data frame 
-concatenates the author nodes without a delimiter. For this reason, I looped through the data to format the authors' names properly.
-This may not be most efficient way of doing so, but this is a very small data set, so it is fine.
-</div>
-
-<div id = "solution">
-```{r}
-
-url <- getURL("https://raw.githubusercontent.com/albert-gilharry/DATA607-Assignment-5/master/data/books.xml")
-doc <- xmlParse(url)
-
-data <- xpathSApply(doc, "//BOOKS/BOOK/AUTHORS",xmlChildren, simplify = TRUE)
-authors = c()
-for(i in 1:length(data)){
-  c <- c()
-  for(j in 1:length(data[[i]])){
-   c <-  append( c, xmlValue(data[[i]][[j]]) )
-  }
-  authors <- append(authors, paste(unlist(c),collapse = ", "))
-}
-
-# use the built in function to create the data frame
-xmlBooks <- xmlToDataFrame(url,stringsAsFactors = FALSE)
-
-# fix the authors
-xmlBooks$AUTHORS <- authors
-```
-</div>
-
-## View XML Data Table
-
-<div id = "solution">
-```{r}
-datatable(xmlBooks, options = list(filter = FALSE),filter="none")
-```
-</div>
-
-
-## Preview JSON File
-
-![HTML FIle](images/JSON.PNG)
-
-
-## Load JSON Data & Create Data Frame
-
-<div id = "comment">
-The books with multiple authors posed a problem again because the built in functionality to create a data frame from JSON data
-attaches an list for the authors. I looped through the data to format the authors.
-This may not be the most efficient way of doing so, but this is a very small data set, so it is fine.
+The NYT API only returns a maximum of 20 articles per request.
+We must paginate these request using the `offset` parameter.
+We must also ensure that we do not exceed the rate limit of 5 requests per second.
 </div>
 
 <div id = "solution">
 ```{r}
 # load JSON data into data frame
-url <- getURL("https://raw.githubusercontent.com/albert-gilharry/DATA607-Assignment-5/master/data/books.json")
-jsonBooks <- fromJSON(url)
-authors = c()
-jsonBooks <- jsonBooks$books
+url = "https://api.nytimes.com/svc/mostpopular/v2/mostemailed/all-sections/30.json?api-key=57cc982821bc4d0fb06b840ef72a9be9"
+articles <- fromJSON(url, flatten = TRUE) %>% data.frame()
+pages <- floor(articles$num_results[1]/20) 
 
-# create a comma separated list for authors of each book
-for(i in 1:nrow(jsonBooks)){
- authors <- append(authors, paste(unlist( jsonBooks$author[i] ),collapse = ", "))
+for(i in 1:pages){
+  page <- fromJSON(paste0(url, "&offset=",i*20), flatten = TRUE) %>% data.frame()
+  articles <- bind_rows(articles,page) # build data frame incrementally
+  Sys.sleep(1) #Stay within usage rate limits
 }
 
-# update authors
-jsonBooks$author <- authors
+# add row id to utilize less memory when transforming
+articles <- rowid_to_column(articles,'id')
 ```
+
 </div>
 
-## View JSON Data Table
+## Preview Resulting Data Table
 
 <div id = "solution">
 ```{r}
-datatable(jsonBooks, options = list(filter = FALSE),filter="none")
+print(names(articles))
+
+
+datatable(head(select(articles, results.title, results.source, results.des_facet, results.published_date)), options = list(filter = FALSE),filter="none")
 ```
 </div>
 
-## Conclusion
+
+## Tidy & Transform Data
 
 <div id = "comment">
-In conclusion, R packages make it relatively easy parse and load HTML, XML, and JSON data into data frames.
-These data frames were not identical due to how the packeges handle one to many relationships in JSON, and XML.
-The processing that I did eventlually led to all data frames being identical.
+I would like to do an exploration to find out the tags/keywords with the highest proportion of shares by email.
+The descriptive tags for each article is stored in a character vector with multiple elements in `results.des_facet`.
+The keywords will need to be separated and then placed in a long format to facilitate downstream analysis. 
+</div>
+
+<div id = "solution">
+```{r}
+keywords <- select(articles, `id`, `results.des_facet`)  %>% 
+  group_by(`id`) %>% summarize(keyword = paste(unlist( `results.des_facet` ),collapse = ","))  %>%
+  cSplit("keyword", sep = ",", direction = "long")
+```
+</div>
+
+
+## Preview Transformed Data
+
+```{r}
+datatable(head(keywords), options = list(filter = FALSE),filter="none")
+```
+
+
+## Visualize: Top 20 Email Shares by Keyword
+
+<div id = "solution">
+```{r}
+  group_by(keywords, keyword) %>%
+  summarize(count = n())  %>%
+  arrange(desc(count)) %>%
+  top_n(20,count) %>%
+  ggplot(aes(x = reorder(keyword, count), y = count,  fill=keyword, label = count)) + 
+  geom_histogram( stat='identity', show.legend = F ) + 
+  geom_text(size = 2, position = position_stack(vjust = 0.5)) +
+  coord_flip() +  
+  labs( title = "Top 20 Email Shares by Keyword", x = "Keywords/Tags", y = "Frequency" )
+```
+</div>
+
+
+## Conclusion
+<div id = "comment">
+The results show that the top NYT Articles shared by email were dominated by politics. 3 of the top 20 tags were related to Gun violence.
+The NYT API was very nice to work with in R. This API may be applicable 
 </div>
